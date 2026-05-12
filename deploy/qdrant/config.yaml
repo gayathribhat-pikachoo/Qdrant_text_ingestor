@@ -1,0 +1,13 @@
+# Minimal config; most settings use Qdrant defaults.
+#
+# Cluster mode is enabled via environment variables in docker-compose.yml.
+# This file exists so you have a stable place for future tuning.
+
+service:
+  # Expose REST and gRPC on default ports.
+  host: 0.0.0.0
+  http_port: 6333
+  grpc_port: 6334
+  # Default is 32 MB; large upserts (e.g. 10k points × dim + payloads) exceed it on REST.
+  # Raise if you use ingest --batch-size 10000 or similar; tune to your largest request.
+  max_request_size_mb: 512

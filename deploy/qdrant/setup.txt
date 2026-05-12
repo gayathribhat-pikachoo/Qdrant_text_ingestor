@@ -1,0 +1,32 @@
+Goal: enable Qdrant distributed mode so shard keys work.
+
+For local development, install Docker + docker compose plugin, then:
+
+1) Copy this folder to the server
+   - deploy/qdrant/docker-compose.yml
+   - deploy/qdrant/config.yaml
+
+2) Start Qdrant
+   - cd deploy/qdrant
+   - docker compose up -d
+   - The first peer is started with --uri in docker-compose.yml.
+
+3) Verify cluster/distributed mode is enabled
+   - curl http://localhost:6333/cluster
+     Expect: {"result":{"status":"enabled", ...}, "status":"ok", ...}
+
+4) Ports
+   - REST / Web UI: http://localhost:6333
+   - gRPC: localhost:6334
+   - Internal cluster: localhost:6335
+
+After this, rerun the notebook cells that create collections + shard keys.
+
+5) Large bulk upserts (e.g. 10k points per REST request)
+   - Default Qdrant REST body limit is 32 MB; big batches + payloads exceed it.
+   - This compose sets QDRANT__SERVICE__MAX_REQUEST_SIZE_MB=512 and config.yaml
+     service.max_request_size_mb: 512. Increase further if you still see
+     "Payload error: JSON payload ... larger than allowed".
+   - Python client: raise QDRANT_TIMEOUT in .env for slow commits.
+   - Optional: use gRPC (qdrant-client prefer_grpc=True); limits differ from REST.
+   - Docker: ensure enough memory for parsing large JSON (container mem limit).

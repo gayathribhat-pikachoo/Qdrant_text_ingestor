@@ -1,0 +1,24 @@
+[project]
+name = "qdrant-text-ingestor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "openai",
+    "qdrant-client",
+    "tqdm",
+    "pandas",
+    "numpy",
+    "python-dotenv",
+    "tiktoken",
+    "sentence-transformers",
+    "langchain",
+    "langchain-openai",
+    "langchain-community",
+    "langchain-core",
+    "anthropic",
+    "langchain_text_splitters",
+    "ipykernel",
+    "ipywidgets"
+]
