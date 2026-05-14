@@ -15,4 +15,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY . .
 
-CMD ["python", "-c", "print('FastEmbed ingestor image is ready. Use docker compose run --rm ingestor python -c ...')"]
+CMD ["uvicorn", "fastembed:app", "--host", "0.0.0.0", "--port", "8000"]
