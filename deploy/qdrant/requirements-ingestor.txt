@@ -1,0 +1,7 @@
+fastembed==0.8.0
+qdrant-client>=1.12.0
+pandas
+python-dotenv>=1.0.0
+tiktoken
+langchain-text-splitters
+tqdm

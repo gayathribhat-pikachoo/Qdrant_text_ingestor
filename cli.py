@@ -4,10 +4,20 @@ import json
 from pathlib import Path
 from typing import Annotated
 
+import pandas as pd
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from Qdrant_text_ingestor.helpers.embeddings import (
+    FASTEMBED_MODEL_NAME,
+    get_batch_fastembed_embedding,
+)
+from Qdrant_text_ingestor.helpers.utils import (
+    batch_list,
+    chunk_records_for_embedding,
+    load_csv,
+)
 from crud import (
     delete_collection,
     delete_tenants,
@@ -138,6 +148,112 @@ def ingest_command(
     console.print(
         f"[green]Ingested[/green] {n} point(s) into collection={collection_name!r} "
         f"shard_key={tenant_name!r} from {csv_path}"
+    )
+
+
+@app.command("embed-fastembed")
+def embed_fastembed_command(
+    csv_path: Annotated[
+        Path,
+        typer.Option("--csv", "-f", help="Path to CSV data to chunk and embed."),
+    ] = DEFAULT_QDRANT_CSV,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Where to write the embedded CSV. Defaults to updating --csv in place."),
+    ] = None,
+    tenant_name: Annotated[
+        str | None,
+        typer.Option("--tenant-name", "--tenant_name", "-t", help="Only embed rows for this tenant/org."),
+    ] = None,
+    tenant_field: Annotated[
+        str,
+        typer.Option("--tenant-field", help="CSV column used with --tenant-name."),
+    ] = "org_id",
+    text_field: Annotated[
+        str,
+        typer.Option("--text-field", help="CSV text column to chunk and embed."),
+    ] = "text",
+    model: Annotated[
+        str,
+        typer.Option("--model", help="FastEmbed model name."),
+    ] = FASTEMBED_MODEL_NAME,
+    batch_size: Annotated[
+        int,
+        typer.Option("--batch-size", help="Text chunks per FastEmbed batch."),
+    ] = 256,
+    window_size: Annotated[
+        int,
+        typer.Option("--window-size", help="Sliding-window token size for markdown chunks."),
+    ] = 400,
+    overlap: Annotated[
+        int,
+        typer.Option("--overlap", help="Sliding-window token overlap."),
+    ] = 80,
+    min_tokens: Annotated[
+        int,
+        typer.Option("--min-tokens", help="Drop chunks below this token count."),
+    ] = 100,
+) -> None:
+    """Generate FastEmbed embeddings for a CSV using markdown-aware sliding-window chunks."""
+    if not csv_path.is_file():
+        console.print(f"[red]CSV not found:[/red] {csv_path.resolve()}")
+        raise typer.Exit(code=1)
+
+    output_path = output or csv_path
+    all_records = load_csv(csv_path)
+    records = all_records
+    if tenant_name is not None:
+        records = [record for record in records if record.get(tenant_field) == tenant_name]
+
+    if not records:
+        console.print("[yellow]No matching records to embed.[/yellow]")
+        raise typer.Exit(code=1)
+
+    chunked_records = chunk_records_for_embedding(
+        records,
+        text_field=text_field,
+        window_size=window_size,
+        overlap=overlap,
+        min_tokens=min_tokens,
+    )
+    if not chunked_records:
+        console.print("[yellow]No chunks survived chunking. Lower --min-tokens or check the text column.[/yellow]")
+        raise typer.Exit(code=1)
+
+    final_data = []
+    total_batches = (len(chunked_records) + batch_size - 1) // batch_size
+    console.print(
+        f"Embedding {len(chunked_records)} chunk(s) from {len(records)} row(s) "
+        f"with {model!r} into {output_path}"
+    )
+
+    for batch_num, record_batch in enumerate(batch_list(chunked_records, batch_size), start=1):
+        console.print(f"Embedding batch {batch_num}/{total_batches} ({len(record_batch)} chunks)")
+        texts = [record[text_field] for record in record_batch]
+        embeddings = get_batch_fastembed_embedding(texts, model=model, batch_size=batch_size)
+
+        for record, embedding in zip(record_batch, embeddings, strict=True):
+            item = dict(record)
+            item["embedding"] = embedding
+            final_data.append(item)
+
+    same_output_as_input = output_path.resolve() == csv_path.resolve()
+    if same_output_as_input and tenant_name is not None:
+        untouched_records = [
+            record for record in all_records
+            if record.get(tenant_field) != tenant_name
+        ]
+        df = pd.DataFrame([*untouched_records, *final_data])
+    else:
+        df = pd.DataFrame(final_data)
+    df["embedding"] = df["embedding"].apply(json.dumps)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+
+    vector_size = len(final_data[0]["embedding"]) if final_data else 0
+    console.print(
+        f"[green]Wrote[/green] {len(final_data)} embedded chunk row(s) to {output_path} "
+        f"(vector size: {vector_size})"
     )
 
 

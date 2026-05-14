@@ -1,23 +1,20 @@
 from __future__ import annotations
-
 import json
 import math
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
-
 from qdrant_client import QdrantClient
 from qdrant_client.models import QueryRequest
 
-
+# Embed query
 def embed_text_queries(
     texts: list[str],
     *,
     model: str,
     dimensions: int | None = None,
 ) -> list[list[float]]:
-    """Embed natural-language questions with the OpenAI API (requires ``OPENAI_API_KEY``)."""
     if not texts:
         return []
     from openai import OpenAI

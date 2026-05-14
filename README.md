@@ -38,6 +38,8 @@ uv run python cli.py restore
 uv run python cli.py restore --input data/collections.json
 ```
 
+
+
 ## Delete
 
 ```powershell
@@ -101,3 +103,6 @@ uv run python cli.py ingest --collection_name diy-pcw-prod --tenant_name PRIMEME
 ```powershell
 uv run python cli.py ingest -c my_collection -t my_tenant -f path/to/qdrant.csv
 uv run python cli.py parallel-query -c my_collection -t my_tenant -Q "your question"
+
+### FastEmbed Embedding Generation
+uv run python cli.py embed-fastembed --csv "Qdrant_text_ingestor/data/qdrant.csv" --tenant-name PCW

@@ -1,18 +1,15 @@
 from __future__ import annotations
-
 import ast
 import uuid
 from pathlib import Path
 from typing import Any
-
 import pandas as pd
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 from tqdm import tqdm
-
 from crud import get_tenants
 
-
+# Setup the collection's vector size
 def collection_vector_size(client: QdrantClient, collection_name: str) -> int:
     """Configured vector dimension for the collection (single or first named vector)."""
     info = client.get_collection(collection_name=collection_name)

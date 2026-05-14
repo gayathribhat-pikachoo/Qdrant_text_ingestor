@@ -24,5 +24,6 @@ dependencies = [
     "anthropic",
     "langchain_text_splitters",
     "ipykernel",
-    "ipywidgets"
+    "ipywidgets",
+    "fastembed"
 ]
