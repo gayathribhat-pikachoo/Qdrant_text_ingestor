@@ -13,6 +13,11 @@ from Qdrant_text_ingestor.helpers.embeddings import (
     FASTEMBED_MODEL_NAME,
     get_batch_fastembed_embedding,
 )
+from Qdrant_text_ingestor.fastembed_ingest import (
+    DEFAULT_FASTEMBED_CSV,
+    DEFAULT_MODEL_NAME as DEFAULT_FASTEMBED_UPSERT_MODEL,
+    upsert_fastembed_csv,
+)
 from Qdrant_text_ingestor.helpers.utils import (
     batch_list,
     chunk_records_for_embedding,
@@ -37,6 +42,7 @@ from parallel_query import (
     sanitize_for_json,
 )
 from qdrant_config import Settings, load_settings, qdrant_client
+from vector_backup import export_points, import_points
 
 app = typer.Typer(help="Provision Qdrant collections and tenant shard keys.")
 console = Console()
@@ -147,6 +153,61 @@ def ingest_command(
     )
     console.print(
         f"[green]Ingested[/green] {n} point(s) into collection={collection_name!r} "
+        f"shard_key={tenant_name!r} from {csv_path}"
+    )
+
+
+@app.command("fastembed-upsert")
+def fastembed_upsert_command(
+    collection_name: Annotated[
+        str,
+        typer.Option("--collection-name", "--collection_name", "-c", help="Qdrant collection name."),
+    ],
+    tenant_name: Annotated[
+        str,
+        typer.Option("--tenant-name", "--tenant_name", "-t", help="Tenant name / shard key."),
+    ],
+    csv_path: Annotated[
+        Path,
+        typer.Option("--csv", "-f", help="Path to qdrant.csv."),
+    ] = DEFAULT_FASTEMBED_CSV,
+    model: Annotated[
+        str,
+        typer.Option("--model", "-m", help="FastEmbed model name used by models.Document()."),
+    ] = DEFAULT_FASTEMBED_UPSERT_MODEL,
+    batch_size: Annotated[
+        int,
+        typer.Option("--batch-size", help="Rows per Qdrant upsert call."),
+    ] = 64,
+    tenant_csv_field: Annotated[
+        str,
+        typer.Option("--tenant-csv-field", help="CSV column used to filter rows for --tenant-name."),
+    ] = "org_id",
+    text_field: Annotated[
+        str,
+        typer.Option("--text-field", help="CSV column used as the embedding text."),
+    ] = "text",
+) -> None:
+    """Upsert CSV rows with qdrant-client FastEmbed inference via models.Document()."""
+    settings = load_settings()
+    client = qdrant_client(settings)
+    console.print(
+        f"Qdrant: {transport_label(settings)} (base URL {settings.url}) | "
+        f"FastEmbed model: {model!r}"
+    )
+    count = upsert_fastembed_csv(
+        client,
+        collection_name=collection_name,
+        tenant_name=tenant_name,
+        csv_path=csv_path,
+        model_name=model,
+        batch_size=batch_size,
+        tenant_csv_field=tenant_csv_field,
+        tenant_payload_field=settings.tenant_name_field,
+        text_field=text_field,
+    )
+    console.print(
+        f"[green]Upserted[/green] {count} point(s) into collection={collection_name!r} "
         f"shard_key={tenant_name!r} from {csv_path}"
     )
 
@@ -465,6 +526,91 @@ def restore_collections(
         for collection, tenants in collections.items()
     ]
     console.print(f"[green]Restored[/green] {len(results)} collection(s) from {input_path}")
+
+
+@app.command("export-points")
+def export_points_command(
+    collection_name: Annotated[
+        str,
+        typer.Option("--collection-name", "--collection_name", "-c", help="Collection to dump."),
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="JSONL path (writes sibling .meta.json). Default: data/backups/<collection>.jsonl",
+        ),
+    ] = None,
+    tenant_name: Annotated[
+        str | None,
+        typer.Option(
+            "--tenant-name",
+            "--tenant_name",
+            "-t",
+            help="Export only this shard key (optional; default = all shards).",
+        ),
+    ] = None,
+    scroll_batch: Annotated[
+        int,
+        typer.Option("--scroll-batch", help="Scroll page size."),
+    ] = 256,
+) -> None:
+    """Export all vectors + payloads to JSONL for migration (custom shards supported)."""
+    settings = load_settings()
+    client = qdrant_client(settings)
+    out_path = output or Path("data/backups") / f"{collection_name}.jsonl"
+    meta = export_points(
+        client,
+        settings,
+        collection_name=collection_name,
+        output_path=out_path,
+        tenant_name=tenant_name,
+        scroll_batch=scroll_batch,
+    )
+    console.print(
+        f"[green]Exported[/green] {meta.points_total} point(s) from {collection_name!r} → {out_path.resolve()}\n"
+        f"Meta: {out_path.with_suffix('.meta.json').resolve()}"
+    )
+
+
+@app.command("import-points")
+def import_points_command(
+    input_path: Annotated[
+        Path,
+        typer.Option("--input", "-i", help="JSONL from export-points (.meta.json sidecar recommended)."),
+    ],
+    collection_name: Annotated[
+        str | None,
+        typer.Option(
+            "--collection-name",
+            "--collection_name",
+            "-c",
+            help="Target collection on this server (defaults to name in .meta.json).",
+        ),
+    ] = None,
+    batch_size: Annotated[
+        int,
+        typer.Option("--batch-size", help="Points per upsert batch."),
+    ] = 200,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Parse file and count points without upserting."),
+    ] = False,
+) -> None:
+    """Import a JSONL backup (e.g. after pointing .env at the new Qdrant host)."""
+    settings = load_settings()
+    client = qdrant_client(settings)
+    n = import_points(
+        client,
+        settings,
+        input_path=input_path,
+        collection_name=collection_name,
+        batch_size=batch_size,
+        dry_run=dry_run,
+    )
+    suffix = " (dry-run)" if dry_run else ""
+    console.print(f"[green]Imported[/green] {n} point(s){suffix} into {collection_name or '«from meta»'}")
 
 
 @app.command("delete-collection")

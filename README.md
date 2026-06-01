@@ -103,6 +103,15 @@ uv run python cli.py ingest --collection_name diy-pcw-prod --tenant_name PRIMEME
 ```powershell
 uv run python cli.py ingest -c my_collection -t my_tenant -f path/to/qdrant.csv
 uv run python cli.py parallel-query -c my_collection -t my_tenant -Q "your question"
+```
+```powershell
+uv run python fastembed_ingest.py query \
+  -c diy-pcw-prod -t PCW \
+  -q "flexible funding" \
+  -k 5 \
+  --payload-keys uid,doc_id,filename
+```
 
 ### FastEmbed Embedding Generation
 uv run python cli.py embed-fastembed --csv "Qdrant_text_ingestor/data/qdrant.csv" --tenant-name PCW
+

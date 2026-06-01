@@ -4,41 +4,25 @@ services:
     container_name: qdrant
     restart: unless-stopped
     ports:
+      # REST / Web UI
       - "6333:6333"
+      # gRPC
       - "6334:6334"
+      # Internal cluster (P2P) port. Consider restricting to VPC/security-group only.
       - "6335:6335"
     volumes:
       - qdrant_storage:/qdrant/storage
       - ./config.yaml:/qdrant/config/production.yaml:ro
-    command: [ "./qdrant", "--uri", "http://localhost:6335" ]
+    command: ["./qdrant", "--uri", "http://localhost:6335"]
     environment:
+      # Enable distributed/cluster mode (required for shard keys / custom sharding API)
       - QDRANT__CLUSTER__ENABLED=true
       - QDRANT__CLUSTER__P2P__PORT=6335
+      # Make this node reachable by other peers (even if you start with 1 node).
+      # IMPORTANT: replace with your server's reachable IP/DNS if different.
       - QDRANT__CLUSTER__URI=http://localhost:6335
+      # REST max body (MB); must cover largest upsert. Overrides/alongs with config.yaml service.max_request_size_mb.
       - QDRANT__SERVICE__MAX_REQUEST_SIZE_MB=512
-
-  ingestor:
-    image: ingestor:v1
-    build:
-      context: ../..
-      dockerfile: deploy/qdrant/Dockerfile
-    profiles: [ "tools" ]
-    working_dir: /app
-    env_file:
-      - ../../.env
-    environment:
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: "6333"
-      QDRANT_GRPC_PORT: "6334"
-      QDRANT_PREFER_GRPC: "true"
-      QDRANT_VECTOR_SIZE: "1024"
-      QDRANT_TIMEOUT: "600"
-    volumes:
-      - ../../Qdrant_text_ingestor/data:/app/Qdrant_text_ingestor/data
-      - fastembed_cache:/root/.cache
-    depends_on:
-      - qdrant
 
 volumes:
   qdrant_storage:
-  fastembed_cache:
