@@ -42,6 +42,7 @@ from parallel_query import (
     sanitize_for_json,
 )
 from qdrant_config import Settings, load_settings, qdrant_client
+from snapshot import create_snapshot, download_snapshot, list_snapshots, restore_snapshot
 from vector_backup import export_points, import_points
 
 app = typer.Typer(help="Provision Qdrant collections and tenant shard keys.")
@@ -597,6 +598,10 @@ def import_points_command(
         bool,
         typer.Option("--dry-run", help="Parse file and count points without upserting."),
     ] = False,
+    tenant_name: Annotated[
+        str | None,
+        typer.Option("--tenant-name", "--tenant_name", "-t", help="Only import points for this shard key."),
+    ] = None,
 ) -> None:
     """Import a JSONL backup (e.g. after pointing .env at the new Qdrant host)."""
     settings = load_settings()
@@ -608,9 +613,143 @@ def import_points_command(
         collection_name=collection_name,
         batch_size=batch_size,
         dry_run=dry_run,
+        tenant_name=tenant_name,
     )
     suffix = " (dry-run)" if dry_run else ""
     console.print(f"[green]Imported[/green] {n} point(s){suffix} into {collection_name or '«from meta»'}")
+
+
+@app.command("restore-tenant")
+def restore_tenant_command(
+    collection_name: Annotated[
+        str,
+        typer.Option("--collection-name", "--collection_name", "-c", help="Collection that owns the tenant."),
+    ],
+    tenant_name: Annotated[
+        str,
+        typer.Option("--tenant-name", "--tenant_name", "-t", help="Tenant shard key to recreate and restore."),
+    ],
+    input_path: Annotated[
+        Path,
+        typer.Option("--input", "-i", help="JSONL backup file produced by export-points."),
+    ],
+    batch_size: Annotated[
+        int,
+        typer.Option("--batch-size", help="Points per upsert batch."),
+    ] = 200,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Validate and count matching points without writing."),
+    ] = False,
+) -> None:
+    """Recreate a tenant shard key and restore its points from a JSONL backup."""
+    settings = load_settings()
+    provisioner = QdrantProvisioner(settings)
+
+    if not dry_run:
+        with console.status(f"Ensuring shard key [bold]{tenant_name}[/bold] on [bold]{collection_name}[/bold]…"):
+            result = provisioner.ensure(collection_name, [tenant_name])
+        if result.created_shard_keys:
+            console.print(f"[green]Created[/green] shard key {tenant_name!r}")
+        else:
+            console.print(f"[dim]Shard key {tenant_name!r} already existed[/dim]")
+
+    client = qdrant_client(settings)
+    n = import_points(
+        client,
+        settings,
+        input_path=input_path,
+        collection_name=collection_name,
+        batch_size=batch_size,
+        dry_run=dry_run,
+        tenant_name=tenant_name,
+    )
+    suffix = " (dry-run)" if dry_run else ""
+    console.print(
+        f"[green]Restored[/green] {n} point(s){suffix} for tenant {tenant_name!r} "
+        f"in collection {collection_name!r}"
+    )
+
+
+@app.command("snapshot-create")
+def snapshot_create_command(
+    collection_name: Annotated[str, typer.Argument(help="Collection to snapshot.")],
+) -> None:
+    """Create a Qdrant native snapshot for a collection."""
+    settings = load_settings()
+    client = qdrant_client(settings)
+    with console.status(f"Creating snapshot for [bold]{collection_name}[/bold]…"):
+        info = create_snapshot(client, collection_name)
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Name", info.name)
+    table.add_row("Creation time", str(info.creation_time))
+    table.add_row("Size (bytes)", str(info.size))
+    console.print(table)
+    console.print(
+        f"[green]Snapshot created.[/green] "
+        f"Download with: snapshot-download {collection_name} {info.name!r}"
+    )
+
+
+@app.command("snapshot-list")
+def snapshot_list_command(
+    collection_name: Annotated[str, typer.Argument(help="Collection to list snapshots for.")],
+) -> None:
+    """List all available snapshots for a collection."""
+    settings = load_settings()
+    client = qdrant_client(settings)
+    snapshots = list_snapshots(client, collection_name)
+    if not snapshots:
+        console.print(f"[yellow]No snapshots found for {collection_name!r}.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("#")
+    table.add_column("Name")
+    table.add_column("Creation time")
+    table.add_column("Size (bytes)")
+    for i, s in enumerate(snapshots, start=1):
+        table.add_row(str(i), s.name, str(s.creation_time), str(s.size))
+    console.print(table)
+
+
+@app.command("snapshot-download")
+def snapshot_download_command(
+    collection_name: Annotated[str, typer.Argument(help="Source collection name.")],
+    snapshot_name: Annotated[str, typer.Argument(help="Snapshot name (from snapshot-list).")],
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Local path to save the snapshot. Default: data/snapshots/<name>"),
+    ] = None,
+) -> None:
+    """Download a snapshot file from the Qdrant server to a local path."""
+    settings = load_settings()
+    out_path = output or Path("data/snapshots") / snapshot_name
+    saved = download_snapshot(settings, collection_name, snapshot_name, out_path)
+    console.print(f"[green]Downloaded[/green] → {saved}")
+    console.print(
+        f"Restore with: snapshot-restore {saved} {collection_name}"
+    )
+
+
+@app.command("snapshot-restore")
+def snapshot_restore_command(
+    snapshot_path: Annotated[Path, typer.Argument(help="Local .snapshot file to upload.")],
+    collection_name: Annotated[str, typer.Argument(help="Target collection name on the server.")],
+    priority: Annotated[
+        str,
+        typer.Option(
+            "--priority",
+            help="Conflict resolution: 'snapshot' (snapshot wins) or 'replica' (existing data wins).",
+        ),
+    ] = "snapshot",
+) -> None:
+    """Upload a local snapshot and restore it into a collection."""
+    settings = load_settings()
+    with console.status(f"Restoring [bold]{snapshot_path.name}[/bold] → [bold]{collection_name}[/bold]…"):
+        restore_snapshot(settings, snapshot_path, collection_name, priority=priority)
+    console.print(f"[green]Restored[/green] {snapshot_path.name} → collection {collection_name!r}")
 
 
 @app.command("delete-collection")

@@ -115,3 +115,31 @@ uv run python fastembed_ingest.py query \
 ### FastEmbed Embedding Generation
 uv run python cli.py embed-fastembed --csv "Qdrant_text_ingestor/data/qdrant.csv" --tenant-name PCW
 
+# Backup
+uv run python cli.py snapshot-create my_collection
+uv run python cli.py snapshot-list my_collection
+uv run python cli.py snapshot-download my_collection my_collection-....snapshot
+uv run python cli.py snapshot-restore data/snapshots/my_collection-....snapshot my_collection
+
+
+New — restore-tenant command:
+uv run python cli.py restore-tenant \
+  --collection-name my_collection \
+  --tenant-name acme_corp \
+  --input data/backups/my_collection.jsonl
+It does two things in one step:
+1. Recreates the shard key if it was deleted
+2. Imports only that tenant's points from the JSONL backup
+
+Full delete → restore cycle:
+# 1. Export before deleting (if no backup yet)
+uv run python cli.py export-points -c my_collection
+
+# 2. Delete the tenant
+uv run python cli.py delete-tenants my_collection -t acme_corp --yes
+
+# 3. Restore just that tenant
+uv run python cli.py restore-tenant -c my_collection -t acme_corp -i data/backups/my_collection.jsonl
+
+# Optional dry-run first to check point count
+uv run python cli.py restore-tenant -c my_collection -t acme_corp -i data/backups/my_collection.jsonl --dry-run

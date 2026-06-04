@@ -170,12 +170,14 @@ def import_points(
     collection_name: str | None = None,
     batch_size: int = 200,
     dry_run: bool = False,
+    tenant_name: str | None = None,
 ) -> int:
     """
     Read JSONL from ``export_points`` and upsert into the collection connected by
     ``client`` (typically a different host after you change ``.env``).
 
     ``collection_name`` overrides the backup metadata when migrating to a new name.
+    ``tenant_name`` restricts import to a single shard key (for per-tenant restores).
     """
     input_path = input_path.resolve()
     if not input_path.is_file():
@@ -236,6 +238,11 @@ def import_points(
             payload = row.get("payload") or {}
             vector = row["vector"]
             sk: str | None = row.get("shard_key")
+
+            if tenant_name is not None:
+                row_tenant = sk or payload.get(settings.tenant_name_field)
+                if row_tenant != tenant_name:
+                    continue
             if use_shard:
                 if sk is None:
                     sk = payload.get(settings.tenant_name_field)

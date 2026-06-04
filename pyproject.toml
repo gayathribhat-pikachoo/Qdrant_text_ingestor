@@ -25,5 +25,6 @@ dependencies = [
     "langchain_text_splitters",
     "ipykernel",
     "ipywidgets",
-    "fastembed"
+    "fastembed",
+    "datasets",
 ]
